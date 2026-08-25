@@ -27,7 +27,8 @@ CLOUDFLARE_TUNNEL_ID=...
 
 The API token is resolved at runtime and falls back to the process env, so on a self-hosted runner
 you inject `CLOUDFLARE_API_TOKEN` once (in the runner's `.env`) and no repo needs a secret. A
-Zone → Cache Purge scope covers purge and dev-mode; add Zone → DNS Edit to use `cloudflare:dns`.
+Zone → Cache Purge scope covers purge and dev-mode; add Zone → DNS Edit to use `cloudflare:dns`,
+and Zone → Zone WAF Edit to use `cloudflare:waf`.
 
 ## Purge
 
@@ -75,6 +76,40 @@ upserts them — handy as a one-off when spinning up a new subdomain:
     ],
 ],
 ```
+
+## WAF custom rules
+
+Upsert-only, keyed by a `tag` embedded in each rule's description — it never touches a rule it did
+not declare, so it is safe against the shared zone. The canonical use is a **Managed Challenge on
+`/admin`**: bots and brute-force hit the edge challenge, real browsers pass near-invisibly, and the
+API is left alone (a challenge needs a browser + `cf_clearance` cookie, so it would break XHR,
+mobile, and webhooks). Needs a **Zone → Zone WAF Edit** token.
+
+```bash
+php artisan cloudflare:waf                       # sync every rule declared in config
+php artisan cloudflare:waf --list                # show the zone's WAF custom rules
+php artisan cloudflare:waf --remove=admin-challenge --force
+```
+
+Declare the rules in `config/cloudflare.php`. Each carries a unique `tag`, an `action` (default
+`managed_challenge`), and EITHER declarative `paths` (the command builds the expression and, absent
+`hosts`, scopes it to this app's own host) OR a raw `expression` for full control:
+
+```php
+'waf' => [
+    'rules' => [
+        // declarative — scoped to this app's host automatically
+        ['tag' => 'admin-challenge', 'paths' => ['/admin']],
+
+        // raw — pin every env host so all deploys upsert the SAME rule and converge
+        // ['tag' => 'admin-challenge', 'expression' => '(starts_with(http.request.uri.path, "/admin")) and (http.host in {"backend-prod.example.com" "backend-qas.example.com"})'],
+    ],
+],
+```
+
+Verify: a challenged request returns `403` with a `cf-mitigated: challenge` header (curl always lands
+here — it can't solve the JS challenge); a passed request has no `cf-mitigated` header and holds a
+`cf_clearance` cookie (HttpOnly — visible in DevTools → Application → Cookies).
 
 ## Testing
 

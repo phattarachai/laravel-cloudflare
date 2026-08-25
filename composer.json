@@ -1,6 +1,6 @@
 {
     "name": "phattarachai/laravel-cloudflare",
-    "description": "Purge the Cloudflare edge cache, toggle development mode, and register tunnel DNS records from artisan — built for apps behind a shared Cloudflare zone.",
+    "description": "Purge the Cloudflare edge cache, toggle development mode, register tunnel DNS records, and sync WAF custom rules from artisan — built for apps behind a shared Cloudflare zone.",
     "keywords": [
         "laravel",
         "cloudflare",
@@ -9,7 +9,10 @@
         "cdn",
         "dns",
         "cloudflared",
-        "tunnel"
+        "tunnel",
+        "waf",
+        "firewall",
+        "managed-challenge"
     ],
     "license": "MIT",
     "authors": [
