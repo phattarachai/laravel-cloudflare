@@ -11,6 +11,11 @@ class CloudflareClient
     private const BASE_URL = 'https://api.cloudflare.com/client/v4';
 
     /**
+     * The phase whose entrypoint ruleset holds a zone's WAF custom rules.
+     */
+    private const FIREWALL_PHASE = 'http_request_firewall_custom';
+
+    /**
      * Resolve the API token at runtime, falling back to the process env.
      *
      * `php artisan optimize` bakes config before the deploy purge step, and the CI
@@ -97,6 +102,51 @@ class CloudflareClient
     public function deleteDnsRecord(string $id): Response
     {
         return $this->request()->delete($this->zoneUrl('dns_records/'.$id));
+    }
+
+    /**
+     * Read the entrypoint ruleset for the WAF custom-rules phase (holds the zone's
+     * custom rules). 404s with success=false when the zone has no custom ruleset yet.
+     */
+    public function firewallRuleset(): Response
+    {
+        return $this->request()->get($this->zoneUrl('rulesets/phases/'.self::FIREWALL_PHASE.'/entrypoint'));
+    }
+
+    /**
+     * Create the custom-rules entrypoint ruleset with the given rules. Used only when
+     * the zone has no custom ruleset yet; afterwards rules are added/patched individually.
+     *
+     * @param  array<int, array<string, mixed>>  $rules
+     */
+    public function createFirewallRuleset(array $rules): Response
+    {
+        return $this->request()->put($this->zoneUrl('rulesets/phases/'.self::FIREWALL_PHASE.'/entrypoint'), [
+            'rules' => array_values($rules),
+        ]);
+    }
+
+    /**
+     * Append one rule to an existing custom ruleset (never touches the other rules).
+     *
+     * @param  array<string, mixed>  $rule
+     */
+    public function addFirewallRule(string $rulesetId, array $rule): Response
+    {
+        return $this->request()->post($this->zoneUrl('rulesets/'.$rulesetId.'/rules'), $rule);
+    }
+
+    /**
+     * @param  array<string, mixed>  $rule
+     */
+    public function updateFirewallRule(string $rulesetId, string $ruleId, array $rule): Response
+    {
+        return $this->request()->patch($this->zoneUrl('rulesets/'.$rulesetId.'/rules/'.$ruleId), $rule);
+    }
+
+    public function deleteFirewallRule(string $rulesetId, string $ruleId): Response
+    {
+        return $this->request()->delete($this->zoneUrl('rulesets/'.$rulesetId.'/rules/'.$ruleId));
     }
 
     private function request(): PendingRequest

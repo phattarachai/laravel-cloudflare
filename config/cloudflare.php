@@ -39,6 +39,32 @@ return [
         'batch_size' => 30,
     ],
 
+    'waf' => [
+        /*
+         * WAF custom rules this app owns, applied to the zone's
+         * http_request_firewall_custom phase. `cloudflare:waf` (no --name) upserts each
+         * one by its `tag` (a marker embedded in the rule description) and never touches
+         * rules it did not declare, so it is safe against the shared zone. Empty = no-op.
+         *
+         * `cloudflare:waf` needs a token scoped Zone → Zone WAF → Edit (broader than the
+         * Cache Purge scope purge/dev-mode use).
+         *
+         * Each rule carries a unique `tag`, an `action` (default 'managed_challenge'),
+         * and EITHER a raw `expression` OR declarative `paths` (+ optional `hosts`):
+         *
+         *   // declarative — the command builds the expression and, when no `hosts` are
+         *   // given, scopes it to this app's own host (cloudflare.host / APP_URL):
+         *   ['tag' => 'admin-challenge', 'paths' => ['/admin']],
+         *
+         *   // raw — full control; pin every env host so each deploy upserts the SAME rule
+         *   // and they converge instead of fighting over one tag on a shared zone:
+         *   ['tag' => 'admin-challenge', 'expression' => '(starts_with(http.request.uri.path, "/admin")) and (http.host in {"a.example.com" "b.example.com"})'],
+         */
+        'rules' => [
+            //
+        ],
+    ],
+
     'dns' => [
         /*
          * cloudflared tunnel UUID. A --tunnel record (or a declared record with
