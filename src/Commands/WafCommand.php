@@ -3,6 +3,8 @@
 namespace Phattarachai\Cloudflare\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Phattarachai\Cloudflare\CloudflareClient;
 
 class WafCommand extends Command
@@ -35,9 +37,15 @@ class WafCommand extends Command
 
     private function list(CloudflareClient $client): int
     {
-        $rules = $client->firewallRuleset()->json('result.rules');
+        $ruleset = $this->ruleset($client);
 
-        if (! is_array($rules) || $rules === []) {
+        if ($ruleset === null) {
+            return self::FAILURE;
+        }
+
+        $rules = $ruleset['rules'];
+
+        if ($rules === []) {
             $this->components->warn('No WAF custom rules on this zone.');
 
             return self::SUCCESS;
@@ -98,14 +106,19 @@ class WafCommand extends Command
             'enabled' => true,
         ];
 
-        $ruleset = $client->firewallRuleset();
-        $rulesetId = $ruleset->json('result.id');
+        $ruleset = $this->ruleset($client);
 
-        if (! $rulesetId) {
+        if ($ruleset === null) {
+            return self::FAILURE;
+        }
+
+        $rulesetId = $ruleset['id'];
+
+        if ($rulesetId === null) {
             return $this->report($client->createFirewallRuleset([$rule])->json('success') === true, 'Created', $tag);
         }
 
-        $existingId = $this->findByTag($ruleset->json('result.rules', []), $tag);
+        $existingId = $this->findByTag($ruleset['rules'], $tag);
 
         $response = $existingId
             ? $client->updateFirewallRule($rulesetId, $existingId, $rule)
@@ -116,11 +129,16 @@ class WafCommand extends Command
 
     private function remove(CloudflareClient $client, string $tag): int
     {
-        $ruleset = $client->firewallRuleset();
-        $rulesetId = $ruleset->json('result.id');
-        $ruleId = $rulesetId ? $this->findByTag($ruleset->json('result.rules', []), $tag) : null;
+        $ruleset = $this->ruleset($client);
 
-        if (! $ruleId) {
+        if ($ruleset === null) {
+            return self::FAILURE;
+        }
+
+        $rulesetId = $ruleset['id'];
+        $ruleId = $rulesetId === null ? null : $this->findByTag($ruleset['rules'], $tag);
+
+        if ($rulesetId === null || $ruleId === null) {
             $this->components->warn('No WAF rule tagged "'.$tag.'" — nothing to remove.');
 
             return self::SUCCESS;
@@ -141,6 +159,47 @@ class WafCommand extends Command
         $this->components->info('Removed WAF rule "'.$tag.'".');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Read the zone's custom-rules entrypoint. Only a real 404 from the API means the
+     * zone has no ruleset yet (id null); any other failure — 5xx, a timeout, a token
+     * without read scope — returns null after reporting it, so the caller writes
+     * nothing. Treating an unknown ruleset as empty would PUT a fresh entrypoint and
+     * wipe every other custom rule on the shared zone.
+     *
+     * @return array{id: ?string, rules: array<int, array<string, mixed>>}|null
+     */
+    private function ruleset(CloudflareClient $client): ?array
+    {
+        try {
+            $response = $client->firewallRuleset();
+        } catch (ConnectionException $e) {
+            $this->components->error('Could not reach the Cloudflare API to read the WAF custom rules: '.$e->getMessage());
+
+            return null;
+        }
+
+        if ($response->status() === 404 && $response->json('success') === false) {
+            return ['id' => null, 'rules' => []];
+        }
+
+        $id = $response->json('result.id');
+
+        if ($response->json('success') !== true || ! is_string($id) || $id === '') {
+            $this->components->error('Could not read the WAF custom rules (HTTP '.$response->status().'): '.$this->errorMessage($response).'. Nothing was changed.');
+
+            return null;
+        }
+
+        return ['id' => $id, 'rules' => $response->json('result.rules') ?? []];
+    }
+
+    private function errorMessage(Response $response): string
+    {
+        $messages = array_column((array) $response->json('errors', []), 'message');
+
+        return $messages === [] ? 'no error detail' : implode('; ', $messages);
     }
 
     /**

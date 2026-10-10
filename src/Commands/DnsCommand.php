@@ -32,13 +32,39 @@ class DnsCommand extends Command
             return $this->list($client);
         }
 
-        if ($this->option('name')) {
-            return $this->option('delete')
-                ? $this->delete($client)
-                : $this->upsert($client, $this->recordFromOptions());
+        if ($this->option('name') && $this->option('delete')) {
+            return $this->delete($client);
         }
 
-        return $this->syncDeclared($client);
+        if ($this->wantsTunnel() && blank(config('cloudflare.dns.tunnel_id'))) {
+            $this->components->error('A tunnel record needs CLOUDFLARE_TUNNEL_ID (cloudflare.dns.tunnel_id) — nothing was written.');
+
+            return self::FAILURE;
+        }
+
+        return $this->option('name')
+            ? $this->upsert($client, $this->recordFromOptions())
+            : $this->syncDeclared($client);
+    }
+
+    /**
+     * True when this run would write a tunnel CNAME: the --tunnel flag on an ad-hoc
+     * upsert, or any declared record with 'tunnel' => true on a sync. Checked before
+     * the first write, so a missing tunnel id never yields `.cfargotunnel.com`.
+     */
+    private function wantsTunnel(): bool
+    {
+        if ($this->option('name')) {
+            return (bool) $this->option('tunnel');
+        }
+
+        foreach (config('cloudflare.dns.records', []) as $record) {
+            if ($record['tunnel'] ?? false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function list(CloudflareClient $client): int

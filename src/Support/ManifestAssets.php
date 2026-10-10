@@ -8,9 +8,11 @@ class ManifestAssets
      * Build the exact edge URLs for a host from a Vite manifest.
      *
      * Returns the document root plus every built entry file and its css[], all under
-     * https://<host>/build/. Purging by these exact files (never `hosts`/`prefixes`,
-     * which are Enterprise-only, nor `purge_everything`, which nukes the shared zone)
-     * is the whole point. Also evicts any transient 404 cached for a fresh hash.
+     * https://<host>/build/. Purging by exact files keeps the default deploy purge
+     * scoped to what a build changes and off the tight hostname/prefix purge budget
+     * (5 requests a minute per account on Free); `purge_everything` would nuke the
+     * shared zone. Also evicts any transient 404 cached for a fresh hash. Other HTML
+     * pages are not included — use --url or the host mode for those.
      *
      * @return array<int, string>
      */

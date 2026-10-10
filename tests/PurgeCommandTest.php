@@ -1,96 +1,127 @@
 <?php
 
-namespace Phattarachai\Cloudflare\Tests;
-
 use Illuminate\Support\Facades\Http;
 
-class PurgeCommandTest extends TestCase
-{
-    private string $manifest;
+beforeEach(function () {
+    $this->manifest = tempnam(sys_get_temp_dir(), 'manifest').'.json';
+    file_put_contents($this->manifest, json_encode([
+        'resources/js/app.js' => ['file' => 'assets/app-abc123.js', 'css' => ['assets/app-def456.css']],
+    ]));
 
-    protected function setUp(): void
-    {
-        parent::setUp();
+    config()->set('cloudflare.purge.manifests', [$this->manifest]);
+});
 
-        $this->manifest = tempnam(sys_get_temp_dir(), 'manifest').'.json';
-        file_put_contents($this->manifest, json_encode([
-            'resources/js/app.js' => ['file' => 'assets/app-abc123.js', 'css' => ['assets/app-def456.css']],
-        ]));
+afterEach(function () {
+    @unlink($this->manifest);
+});
 
-        config()->set('cloudflare.purge.manifests', [$this->manifest]);
-    }
+it('purges the manifest files and document root', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => true, 'result' => ['id' => 'x']])]);
 
-    protected function tearDown(): void
-    {
-        @unlink($this->manifest);
+    $this->artisan('cloudflare:purge')->assertSuccessful();
 
-        parent::tearDown();
-    }
-
-    public function test_it_purges_the_manifest_files_and_document_root(): void
-    {
-        Http::fake([
-            '*/purge_cache' => Http::response(['success' => true, 'result' => ['id' => 'x']]),
+    Http::assertSent(fn ($request) => $request->url() === 'https://api.cloudflare.com/client/v4/zones/zone-123/purge_cache'
+        && $request->method() === 'POST'
+        && $request->hasHeader('Authorization', 'Bearer test-token')
+        && $request['files'] === [
+            'https://music.phattarachai.app/',
+            'https://music.phattarachai.app/build/assets/app-abc123.js',
+            'https://music.phattarachai.app/build/assets/app-def456.css',
         ]);
+});
 
-        $this->artisan('cloudflare:purge')->assertSuccessful();
+it('appends explicit urls', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
 
-        Http::assertSent(function ($request) {
-            return $request->url() === 'https://api.cloudflare.com/client/v4/zones/zone-123/purge_cache'
-                && $request->method() === 'POST'
-                && $request->hasHeader('Authorization', 'Bearer test-token')
-                && $request['files'] === [
-                    'https://music.phattarachai.app/',
-                    'https://music.phattarachai.app/build/assets/app-abc123.js',
-                    'https://music.phattarachai.app/build/assets/app-def456.css',
-                ];
-        });
-    }
+    $this->artisan('cloudflare:purge', ['--url' => ['https://music.phattarachai.app/sitemap.xml']])
+        ->assertSuccessful();
 
-    public function test_it_appends_explicit_urls(): void
-    {
-        Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
+    Http::assertSent(fn ($request) => in_array('https://music.phattarachai.app/sitemap.xml', $request['files'], true));
+});
 
-        $this->artisan('cloudflare:purge', ['--url' => ['https://music.phattarachai.app/sitemap.xml']])
-            ->assertSuccessful();
+it('batches files at the 100-url cap', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
+    $urls = array_map(fn (int $i) => 'https://music.phattarachai.app/page-'.$i, range(1, 150));
 
-        Http::assertSent(fn ($request) => in_array('https://music.phattarachai.app/sitemap.xml', $request['files'], true));
-    }
+    $this->artisan('cloudflare:purge', ['--url' => $urls])->assertSuccessful();
 
-    public function test_it_no_ops_and_sends_nothing_when_unconfigured(): void
-    {
-        Http::fake();
-        config()->set('cloudflare.token', null);
+    Http::assertSentCount(2);
+    Http::assertSent(fn ($request) => count($request['files']) === 100);
+    Http::assertSent(fn ($request) => count($request['files']) === 53);
+});
 
-        $this->artisan('cloudflare:purge')->assertSuccessful();
+it('purges the whole app host with --host', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
 
-        Http::assertNothingSent();
-    }
+    $this->artisan('cloudflare:purge', ['--host' => true])->assertSuccessful();
 
-    public function test_it_fails_when_the_api_reports_no_success(): void
-    {
-        Http::fake(['*/purge_cache' => Http::response(['success' => false, 'errors' => [['message' => 'nope']]])]);
+    Http::assertSentCount(1);
+    Http::assertSent(fn ($request) => $request->data() === ['hosts' => ['music.phattarachai.app']]);
+});
 
-        $this->artisan('cloudflare:purge')->assertFailed();
-    }
+it('purges the whole app host when the configured mode is host', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
+    config()->set('cloudflare.purge.mode', 'host');
 
-    public function test_everything_requires_force_and_sends_purge_everything(): void
-    {
-        Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
+    $this->artisan('cloudflare:purge')->assertSuccessful();
 
-        $this->artisan('cloudflare:purge', ['--everything' => true, '--force' => true])->assertSuccessful();
+    Http::assertSent(fn ($request) => $request->data() === ['hosts' => ['music.phattarachai.app']]);
+});
 
-        Http::assertSent(fn ($request) => $request['purge_everything'] === true);
-    }
+it('also purges explicit urls in host mode', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
 
-    public function test_everything_without_force_aborts_non_interactively(): void
-    {
-        Http::fake();
+    $this->artisan('cloudflare:purge', ['--host' => true, '--url' => ['https://cdn.example.com/x.js']])
+        ->assertSuccessful();
 
-        $this->artisan('cloudflare:purge', ['--everything' => true])
-            ->expectsConfirmation('Purge the ENTIRE zone? This evicts every app sharing it.', 'no')
-            ->assertFailed();
+    Http::assertSentCount(2);
+    Http::assertSent(fn ($request) => $request->data() === ['files' => ['https://cdn.example.com/x.js']]);
+});
 
-        Http::assertNothingSent();
-    }
-}
+it('fails when the host purge is rejected', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => false, 'errors' => [['message' => 'rate limited']]], 429)]);
+
+    $this->artisan('cloudflare:purge', ['--host' => true])->assertFailed();
+});
+
+it('fails without a host to purge', function () {
+    Http::fake();
+    config()->set('app.url', null);
+
+    $this->artisan('cloudflare:purge')->assertFailed();
+
+    Http::assertNothingSent();
+});
+
+it('no-ops and sends nothing when unconfigured', function () {
+    Http::fake();
+    config()->set('cloudflare.token', null);
+
+    $this->artisan('cloudflare:purge')->assertSuccessful();
+
+    Http::assertNothingSent();
+});
+
+it('fails when the api reports no success', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => false, 'errors' => [['message' => 'nope']]])]);
+
+    $this->artisan('cloudflare:purge')->assertFailed();
+});
+
+it('sends purge_everything with --everything --force', function () {
+    Http::fake(['*/purge_cache' => Http::response(['success' => true])]);
+
+    $this->artisan('cloudflare:purge', ['--everything' => true, '--force' => true])->assertSuccessful();
+
+    Http::assertSent(fn ($request) => $request['purge_everything'] === true);
+});
+
+it('aborts --everything without --force when not confirmed', function () {
+    Http::fake();
+
+    $this->artisan('cloudflare:purge', ['--everything' => true])
+        ->expectsConfirmation('Purge the ENTIRE zone? This evicts every app sharing it.', 'no')
+        ->assertFailed();
+
+    Http::assertNothingSent();
+});

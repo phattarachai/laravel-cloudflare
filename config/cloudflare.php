@@ -2,7 +2,8 @@
 
 return [
     /*
-     * API token scoped to Zone → Cache Purge (+ DNS Edit if you use cloudflare:dns).
+     * API token scoped to Zone → Cache Purge (+ Zone Settings Edit for
+     * cloudflare:dev-mode, DNS Edit for cloudflare:dns, Zone WAF Edit for cloudflare:waf).
      *
      * Resolved at runtime by CloudflareClient with a getenv() fallback, because
      * `php artisan optimize` bakes this config before the deploy purge step runs and
@@ -24,6 +25,19 @@ return [
 
     'purge' => [
         /*
+         * What a bare `cloudflare:purge` evicts:
+         *
+         *   'files' — the document root plus every built Vite asset, by exact URL.
+         *             Other HTML pages stay cached until they expire (add --url).
+         *   'host'  — every cached URL on this app's host (`{"hosts": [<host>]}`),
+         *             safe on a shared zone. Available on every plan, but Free allows
+         *             only 5 hostname/tag/prefix purges a minute per account.
+         *
+         * `--host` forces the host mode for one run.
+         */
+        'mode' => env('CLOUDFLARE_PURGE_MODE', 'files'),
+
+        /*
          * Vite manifest locations, tried in order. Each entry's built file plus its
          * css[] become the exact URLs purged, alongside the document root.
          */
@@ -33,10 +47,11 @@ return [
         ],
 
         /*
-         * Non-Enterprise plans cap a `files` purge at 30 URLs per request. Larger
-         * builds are batched and each batch is logged so nothing is silently dropped.
+         * Cloudflare caps a `files` purge at 100 URLs per request on Free, Pro and
+         * Business (500 on Enterprise). Larger builds are batched and each batch is
+         * logged so nothing is silently dropped.
          */
-        'batch_size' => 30,
+        'batch_size' => 100,
     ],
 
     'waf' => [
@@ -68,8 +83,9 @@ return [
     'dns' => [
         /*
          * cloudflared tunnel UUID. A --tunnel record (or a declared record with
-         * 'tunnel' => true) becomes a proxied CNAME to <tunnel_id>.cfargotunnel.com.
-         * Public identifier, not a secret.
+         * 'tunnel' => true) becomes a proxied CNAME to <tunnel_id>.cfargotunnel.com;
+         * without it such a run fails before writing anything. Public identifier,
+         * not a secret.
          */
         'tunnel_id' => env('CLOUDFLARE_TUNNEL_ID'),
 
