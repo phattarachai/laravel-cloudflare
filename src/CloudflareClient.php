@@ -59,6 +59,18 @@ class CloudflareClient
     }
 
     /**
+     * Purge every cached URL on the given hostnames. Available on every plan since
+     * 2025-04, but on Free it shares the 5-requests-per-minute account budget with
+     * tag/prefix/everything purges, so one call per deploy is the intended use.
+     *
+     * @param  array<int, string>  $hosts
+     */
+    public function purgeHosts(array $hosts): Response
+    {
+        return $this->request()->post($this->zoneUrl('purge_cache'), ['hosts' => array_values($hosts)]);
+    }
+
+    /**
      * Purge the entire zone. Nukes every other app on a shared zone — guard the call site.
      */
     public function purgeEverything(): Response
@@ -106,7 +118,9 @@ class CloudflareClient
 
     /**
      * Read the entrypoint ruleset for the WAF custom-rules phase (holds the zone's
-     * custom rules). 404s with success=false when the zone has no custom ruleset yet.
+     * custom rules). 404s with success=false when the zone has no custom ruleset yet;
+     * any other failure (5xx, timeout, a token without read scope) means "unknown",
+     * never "empty".
      */
     public function firewallRuleset(): Response
     {
@@ -114,8 +128,9 @@ class CloudflareClient
     }
 
     /**
-     * Create the custom-rules entrypoint ruleset with the given rules. Used only when
-     * the zone has no custom ruleset yet; afterwards rules are added/patched individually.
+     * Create the custom-rules entrypoint ruleset with the given rules. This PUT REPLACES
+     * every custom rule in the zone, so call it only after firewallRuleset() returned a
+     * real 404; afterwards rules are added/patched individually.
      *
      * @param  array<int, array<string, mixed>>  $rules
      */
