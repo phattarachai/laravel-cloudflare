@@ -61,8 +61,8 @@ return [
          * one by its `tag` (a marker embedded in the rule description) and never touches
          * rules it did not declare, so it is safe against the shared zone. Empty = no-op.
          *
-         * `cloudflare:waf` needs a token scoped Zone → Zone WAF → Edit (broader than the
-         * Cache Purge scope purge/dev-mode use).
+         * `cloudflare:waf` needs a token scoped Zone → Zone WAF → Edit, on top of the
+         * Cache Purge scope that purge uses.
          *
          * Each rule carries a unique `tag`, an `action` (default 'managed_challenge'),
          * and EITHER a raw `expression` OR declarative `paths` (+ optional `hosts`):
